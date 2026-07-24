@@ -150,5 +150,3 @@ jobs:
           path: artifact/
           if-no-files-found: error
           retention-days: 7
-          if-no-files-found: error
-          retention-days: 7
