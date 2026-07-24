@@ -83,7 +83,7 @@ jobs:
             -S . \
             -B build \
             -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_BUILD_TYPE=Game__Shipping__Linux \
             -DCMAKE_C_COMPILER=gcc-12 \
             -DCMAKE_CXX_COMPILER=g++-12 \
             -DUE4SS_GUI_ENABLED=OFF
