@@ -1,0 +1,137 @@
+name: Build UE4SS for Host-Unlimited
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build compatible libUE4SS.so
+    runs-on: ubuntu-22.04
+
+    env:
+      CC: gcc-12
+      CXX: g++-12
+
+    steps:
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gcc-12 \
+            g++-12 \
+            cmake \
+            ninja-build \
+            git \
+            curl \
+            zip \
+            unzip \
+            pkg-config \
+            python3 \
+            binutils \
+            patchelf \
+            libssl-dev \
+            libgl1-mesa-dev \
+            libegl1-mesa-dev \
+            libglfw3-dev \
+            libx11-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libvulkan-dev
+
+      - name: Install current Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Download repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download submodules
+        shell: bash
+        run: |
+          git submodule sync --recursive
+
+          git -c url."https://github.com/".insteadOf=git@github.com: \
+            submodule update --init --recursive --depth 1 || {
+              echo "::warning::Mindestens ein Submodul konnte nicht heruntergeladen werden."
+              echo "Der Build wird trotzdem versucht."
+            }
+
+      - name: Show tool versions
+        run: |
+          ldd --version | head -n 1
+          gcc-12 --version | head -n 1
+          g++-12 --version | head -n 1
+          cmake --version | head -n 1
+          rustc --version
+          cargo --version
+
+      - name: Configure UE4SS
+        run: |
+          cmake \
+            -S . \
+            -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=gcc-12 \
+            -DCMAKE_CXX_COMPILER=g++-12 \
+            -DUE4SS_GUI_ENABLED=OFF
+
+      - name: Build UE4SS
+        run: |
+          cmake --build build \
+            --target UE4SS \
+            --parallel 2
+
+      - name: Locate and inspect library
+        shell: bash
+        run: |
+          LIBRARY="$(find build -type f -name 'libUE4SS.so' -print -quit)"
+
+          if [ -z "$LIBRARY" ]; then
+            echo "::error::libUE4SS.so wurde nach dem Build nicht gefunden."
+            find build -maxdepth 6 -type f | sort
+            exit 1
+          fi
+
+          echo "Gefundene Datei: $LIBRARY"
+          file "$LIBRARY"
+
+          echo
+          echo "Benötigte Bibliotheken:"
+          ldd "$LIBRARY" || true
+
+          echo
+          echo "Verlangte GLIBC- und GLIBCXX-Versionen:"
+          strings "$LIBRARY" \
+            | grep -oE 'GLIBC(_XX)?_[0-9.]+' \
+            | sort -Vu \
+            | tee library-versions.txt
+
+          mkdir -p artifact
+          cp "$LIBRARY" artifact/libUE4SS.so
+          cp library-versions.txt artifact/library-versions.txt
+
+          cd artifact
+          zip UE4SS-Linux-HostUnlimited.zip \
+            libUE4SS.so \
+            library-versions.txt
+
+      - name: Upload finished build
+        uses: actions/upload-artifact@v4
+        with:
+          name: UE4SS-Linux-HostUnlimited
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 7
