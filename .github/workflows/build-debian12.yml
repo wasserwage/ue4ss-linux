@@ -12,17 +12,21 @@ jobs:
     runs-on: ubuntu-22.04
 
     env:
-      CC: gcc-12
-      CXX: g++-12
+      CC: gcc-13
+      CXX: g++-13
 
     steps:
-      - name: Install build tools
+      - name: Install GCC 13 and build tools
         run: |
           sudo apt-get update
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+
           sudo apt-get install -y \
             build-essential \
-            gcc-12 \
-            g++-12 \
+            gcc-13 \
+            g++-13 \
             cmake \
             ninja-build \
             git \
@@ -53,7 +57,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Download repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -71,8 +75,8 @@ jobs:
       - name: Show tool versions
         run: |
           ldd --version | head -n 1
-          gcc-12 --version | head -n 1
-          g++-12 --version | head -n 1
+          gcc-13 --version | head -n 1
+          g++-13 --version | head -n 1
           cmake --version | head -n 1
           rustc --version
           cargo --version
@@ -84,8 +88,12 @@ jobs:
             -B build \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Game__Shipping__Linux \
-            -DCMAKE_C_COMPILER=gcc-12 \
-            -DCMAKE_CXX_COMPILER=g++-12 \
+            -DCMAKE_C_COMPILER=gcc-13 \
+            -DCMAKE_CXX_COMPILER=g++-13 \
+            -DCMAKE_CXX_FLAGS="-static-libstdc++ -static-libgcc" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
+            -DCMAKE_MODULE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
             -DUE4SS_GUI_ENABLED=OFF
 
       - name: Build UE4SS
@@ -105,27 +113,34 @@ jobs:
             exit 1
           fi
 
+          mkdir -p artifact
+
           echo "Gefundene Datei: $LIBRARY"
-          file "$LIBRARY"
+          file "$LIBRARY" | tee artifact/file-info.txt
 
           echo
-          echo "Benötigte Bibliotheken:"
-          ldd "$LIBRARY" || true
+          echo "Benötigte dynamische Bibliotheken:"
+          ldd "$LIBRARY" | tee artifact/ldd.txt || true
 
           echo
           echo "Verlangte GLIBC- und GLIBCXX-Versionen:"
           strings "$LIBRARY" \
             | grep -oE 'GLIBC(_XX)?_[0-9.]+' \
             | sort -Vu \
-            | tee library-versions.txt
+            | tee artifact/library-versions.txt || true
 
-          mkdir -p artifact
+          if ldd "$LIBRARY" 2>/dev/null | grep -q "libstdc++.so"; then
+            echo "::error::libstdc++ wurde weiterhin dynamisch eingebunden."
+            exit 1
+          fi
+
           cp "$LIBRARY" artifact/libUE4SS.so
-          cp library-versions.txt artifact/library-versions.txt
 
           cd artifact
           zip UE4SS-Linux-HostUnlimited.zip \
             libUE4SS.so \
+            file-info.txt \
+            ldd.txt \
             library-versions.txt
 
       - name: Upload finished build
@@ -133,5 +148,7 @@ jobs:
         with:
           name: UE4SS-Linux-HostUnlimited
           path: artifact/
+          if-no-files-found: error
+          retention-days: 7
           if-no-files-found: error
           retention-days: 7
